@@ -15,12 +15,25 @@
 // Proto library
 java_library_host {
     name: "countryzonesprotos",
+
     proto: {
         type: "full",
         include_dirs: ["external/protobuf/src"],
     },
 
     srcs: ["src/main/proto/**/*.proto"],
+}
+
+java_library_host {
+    name: "tzlookup",
+
+    srcs: ["src/main/java/**/*.java"],
+    static_libs: [
+        "countryzonesprotos",
+        "icu4j",
+        "libprotobuf-java-full",
+        "tztools_common",
+    ],
 }
 
 // The tzlookup_generator host tool.
@@ -30,21 +43,18 @@ java_binary_host {
     main_class: "com.android.libcore.timezone.tzlookup.TzLookupGenerator",
     srcs: ["src/main/java/**/*.java"],
     static_libs: [
-        "icu4j",
-        "countryzonesprotos",
-        "libprotobuf-java-full",
-        "tztools_common",
+        "tzlookup",
     ],
 }
 
-// The tzlookup_generator host tool.
 java_test_host {
-    name: "tzlookup_generator_tests",
+    name: "tzlookup_tests",
 
     srcs: ["src/test/java/**/*.java"],
     static_libs: [
         "junit",
-        "tzlookup_generator",
+        "tzlookup",
         "tztools_common_testing",
     ],
+    test_suites: ["general-tests"],
 }
