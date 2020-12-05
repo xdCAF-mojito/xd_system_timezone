@@ -17,10 +17,7 @@
 package com.android.timezone.geotz.provider;
 
 import android.app.Service;
-import android.content.ComponentName;
 import android.content.Intent;
-import android.content.pm.PackageManager;
-import android.os.Bundle;
 import android.os.IBinder;
 
 import androidx.annotation.Nullable;
@@ -29,7 +26,14 @@ import java.io.FileDescriptor;
 import java.io.PrintWriter;
 
 /**
- * The service that provides the {@link OfflineLocationTimeZoneProvider}.
+ * The service that provides the {@link OfflineLocationTimeZoneProvider}. An instance of this
+ * service is discovered via configuration in an {@code AndroidManifest.xml}.
+ *
+ * <p>See {@link com.android.server.location.timezone.LocationTimeZoneManagerService} for the server
+ * component that binds to it and how it is discovered.
+ *
+ * <p>See {@link com.android.server.ServiceWatcher} for how to control how the service is treated
+ * and how the server resolves to a single service if there are multiple available.
  */
 public final class OfflineLocationTimeZoneService extends Service {
 
@@ -41,25 +45,10 @@ public final class OfflineLocationTimeZoneService extends Service {
     public IBinder onBind(Intent intent) {
         synchronized (mLock) {
             if (mProvider == null) {
-                Bundle metaData = getServiceMetaData();
-                mProvider = new OfflineLocationTimeZoneProvider(this, metaData);
+                mProvider = new OfflineLocationTimeZoneProvider(this);
                 mProvider.onBind();
             }
             return mProvider.getBinder();
-        }
-    }
-
-    /**
-     * Metadata entries are used to configure the provider as this enables the provider code to
-     * be a pure library, not an
-     */
-    private Bundle getServiceMetaData() {
-        try {
-            ComponentName myService = new ComponentName(this, this.getClass());
-            return getPackageManager()
-                    .getServiceInfo(myService, PackageManager.GET_META_DATA).metaData;
-        } catch (PackageManager.NameNotFoundException e) {
-            throw new IllegalStateException("Unable to obtain service meta data.", e);
         }
     }
 
