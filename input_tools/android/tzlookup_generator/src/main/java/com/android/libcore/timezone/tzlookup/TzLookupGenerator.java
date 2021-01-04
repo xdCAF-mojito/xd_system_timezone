@@ -15,17 +15,20 @@
  */
 package com.android.libcore.timezone.tzlookup;
 
-import com.android.libcore.timezone.tzlookup.proto.CountryZonesFile;
+import com.android.libcore.timezone.countryzones.proto.CountryZonesFile;
 import com.android.libcore.timezone.tzlookup.zonetree.CountryZoneTree;
 import com.android.libcore.timezone.tzlookup.zonetree.CountryZoneUsage;
 import com.android.libcore.timezone.util.Errors;
 import com.android.libcore.timezone.util.Errors.HaltExecutionException;
+import com.android.timezone.tzids.TimeZoneIds;
+import com.android.timezone.tzids.proto.TzIdsProto;
 import com.ibm.icu.util.BasicTimeZone;
 import com.ibm.icu.util.Calendar;
 import com.ibm.icu.util.GregorianCalendar;
 import com.ibm.icu.util.TimeZone;
 import com.ibm.icu.util.TimeZoneRule;
 
+import java.io.File;
 import java.io.IOException;
 import java.text.ParseException;
 import java.time.Instant;
@@ -35,13 +38,15 @@ import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
+
 import javax.xml.stream.XMLStreamException;
 
 /**
- * Generates the tzlookup.xml file using the information from ICU4J, countryzones.txt, backwards
- * and zones.tab.
+ * Generates Android's tzlookup.xml and tzids.prototxt file using ICU4J, Android's countryzones.txt
+ * file, and TZDB's backwards and zones.tab files.
  */
 public final class TzLookupGenerator {
 
@@ -73,31 +78,34 @@ public final class TzLookupGenerator {
     private final String countryZonesFileIn;
     private final String zoneTabFileIn;
     private final String backwardFileIn;
-    private final String tzLookupXmlOut;
+    private final String tzLookupXmlFileOut;
+    private final String timeZoneIdsFileOut;
 
     /**
      * Executes the generator.
      */
     public static void main(String[] args) throws Exception {
-        if (args.length != 4) {
+        if (args.length != 5) {
             System.err.println(
                     "usage: java com.android.libcore.timezone.tzlookup.TzLookupGenerator"
                             + " <[in] countryzones.txt file> <[in] zone.tab file>"
-                            + " <[in] backward file> <[out] tzlookup.xml file>");
+                            + " <[in] backward file>"
+                            + " <[out] tzlookup.xml file> <[out] zone IDs file>");
             System.exit(0);
         }
         TzLookupGenerator tzLookupGenerator =
-                new TzLookupGenerator(args[0], args[1], args[2], args[3]);
+                new TzLookupGenerator(args[0], args[1], args[2], args[3], args[4]);
         boolean success = tzLookupGenerator.execute();
         System.exit(success ? 0 : 1);
     }
 
     TzLookupGenerator(String countryZonesFileIn, String zoneTabFileIn, String backwardFileIn,
-            String tzLookupXmlOut) {
+            String tzLookupXmlFileOut, String timeZoneIdsFileOut) {
         this.countryZonesFileIn = countryZonesFileIn;
         this.zoneTabFileIn = zoneTabFileIn;
         this.backwardFileIn = backwardFileIn;
-        this.tzLookupXmlOut = tzLookupXmlOut;
+        this.tzLookupXmlFileOut = tzLookupXmlFileOut;
+        this.timeZoneIdsFileOut = timeZoneIdsFileOut;
     }
 
     boolean execute() {
@@ -122,13 +130,13 @@ public final class TzLookupGenerator {
             List<CountryZonesFile.Country> countriesIn = countryZonesIn.getCountriesList();
             List<String> countriesInIsos = CountryZonesFileSupport.extractIsoCodes(countriesIn);
 
-            // Sanity check the countryzones file only contains lower-case country codes. The output
-            // file uses them and the on-device code assumes lower case.
+            // Confidence check the countryzones file only contains lower-case country codes. The
+            // output file uses them and the on-device code assumes lower case.
             if (!Utils.allLowerCaseAscii(countriesInIsos)) {
                 throw errors.addFatalAndHalt(
                         "Non-lowercase country ISO codes found in: " + countriesInIsos);
             }
-            // Sanity check the countryzones file doesn't contain duplicate country entries.
+            // Confidence check the countryzones file doesn't contain duplicate country entries.
             if (!Utils.allUnique(countriesInIsos)) {
                 throw errors.addFatalAndHalt(
                         "Duplicate input country entries found: " + countriesInIsos);
@@ -152,12 +160,12 @@ public final class TzLookupGenerator {
             BackwardFile backwardIn = parseAndValidateBackwardFile(backwardFileIn, errors);
             errors.throwIfError("Errors accumulated");
 
-            TzLookupFile.TimeZones timeZonesOut = createOutputData(
+            OutputData outputData = createOutputData(
                     inputIanaVersion, zoneTabMapping, countriesIn, backwardIn, errors);
-            errors.throwIfError("Errors accumulated");
 
             // Write the output structure if there wasn't an error.
-            writeOutputData(timeZonesOut, tzLookupXmlOut, errors);
+            errors.throwIfError("Errors accumulated");
+            writeOutputData(outputData, tzLookupXmlFileOut, timeZoneIdsFileOut, errors);
             return true;
         } catch (HaltExecutionException e) {
             logError("Stopping due to fatal condition", e);
@@ -227,29 +235,44 @@ public final class TzLookupGenerator {
         }
     }
 
-    private static void writeOutputData(TzLookupFile.TimeZones timeZonesOut,
-            String tzLookupXmlFileName, Errors errors) throws HaltExecutionException {
+    private static void writeOutputData(OutputData outputData,
+            String tzLookupXmlFileName, String timeZoneIdsFileName, Errors errors)
+            throws HaltExecutionException {
         errors.pushScope("write " + tzLookupXmlFileName);
         try {
             // Write out the file used on device.
             logInfo("Writing " + tzLookupXmlFileName);
 
+            TzLookupFile.TimeZones timeZonesOut = outputData.getTzLookupTimeZones();
             TzLookupFile.write(timeZonesOut, tzLookupXmlFileName);
         } catch (IOException | XMLStreamException e) {
             errors.addFatalAndHalt("Unable to write " + tzLookupXmlFileName, e);
         } finally {
             errors.popScope();
         }
+
+        errors.pushScope("write " + timeZoneIdsFileName);
+        try {
+            // Write out the tz IDs file used during later stages of the pipeline.
+            logInfo("Writing " + timeZoneIdsFileName);
+
+            TimeZoneIds timeZoneIds = outputData.getTimeZoneIds();
+            timeZoneIds.store(new File(timeZoneIdsFileName));
+        } catch (IOException e) {
+            errors.addFatalAndHalt("Unable to write " + timeZoneIdsFileName, e);
+        } finally {
+            errors.popScope();
+        }
     }
 
-    private static TzLookupFile.TimeZones createOutputData(String inputIanaVersion,
+    private static OutputData createOutputData(String inputIanaVersion,
             Map<String, List<String>> zoneTabMapping, List<CountryZonesFile.Country> countriesIn,
             BackwardFile backwardIn, Errors errors) throws HaltExecutionException {
 
         // Start constructing the output structure.
         TzLookupFile.TimeZones timeZonesOut = new TzLookupFile.TimeZones(inputIanaVersion);
-        TzLookupFile.CountryZones countryZonesOut = new TzLookupFile.CountryZones();
-        timeZonesOut.setCountryZones(countryZonesOut);
+        TzLookupFile.CountryZones tzLookupCountryZones = new TzLookupFile.CountryZones();
+        timeZonesOut.setCountryZones(tzLookupCountryZones);
 
         // The time use when sampling the offsets for a zone.
         final long offsetSampleTimeMillis = getSampleOffsetTimeMillisForData(inputIanaVersion);
@@ -258,6 +281,9 @@ public final class TzLookupGenerator {
         // We don't care about historical use of UTC (e.g. parts of Europe like France prior
         // to WW2) so we start looking at the beginning of "this year".
         long everUseUtcStartTimeMillis = getYearStartTimeMillisForData(inputIanaVersion);
+
+        TzIdsProto.TimeZoneIds.Builder tzIdsBuilder = TzIdsProto.TimeZoneIds.newBuilder()
+                .setIanaVersion(inputIanaVersion);
 
         // Process each Country.
         for (CountryZonesFile.Country countryIn : countriesIn) {
@@ -269,20 +295,23 @@ public final class TzLookupGenerator {
                 continue;
             }
 
-            TzLookupFile.Country countryOut = processCountry(
+            CountryOutputData countryOutputData = processCountry(
                     offsetSampleTimeMillis, everUseUtcStartTimeMillis, countryIn,
                     zoneTabCountryTimeZoneIds, backwardIn, errors);
-            if (countryOut == null) {
+            if (countryOutputData == null) {
                 // Continue processing countries if there are only errors.
                 continue;
             }
-            countryZonesOut.addCountry(countryOut);
+
+            tzLookupCountryZones.addCountry(countryOutputData.getTzLookupCountry());
+            tzIdsBuilder.addCountryMappings(countryOutputData.getTimeZoneIdsCountryMapping());
         }
         errors.throwIfError("One or more countries failed");
-        return timeZonesOut;
+        TimeZoneIds timeZoneIds = new TimeZoneIds(tzIdsBuilder.build());
+        return new OutputData(timeZonesOut, timeZoneIds);
     }
 
-    private static TzLookupFile.Country processCountry(long offsetSampleTimeMillis,
+    private static CountryOutputData processCountry(long offsetSampleTimeMillis,
             long everUseUtcStartTimeMillis, CountryZonesFile.Country countryIn,
             List<String> zoneTabCountryTimeZoneIds, BackwardFile backwardIn,
             Errors errors) {
@@ -412,12 +441,18 @@ public final class TzLookupGenerator {
                     TzLookupFile.TimeZoneMapping timeZoneIdOut = new TzLookupFile.TimeZoneMapping(
                             timeZoneInId, shownInPicker, notUsedAfterInstant, notUsedReplacementId,
                             alternativeZoneIds);
-                    countryOut.addTimeZoneIdentifier(timeZoneIdOut);
+                    countryOut.addTimeZoneMapping(timeZoneIdOut);
                 } finally {
                     errors.popScope();
                 }
             }
-            return countryOut;
+
+            // CountryMapping contains only information that is available from Country so we can
+            // currently build one from the other.
+            TzIdsProto.CountryMapping countryMappingProto =
+                    TzLookupFile.Country.createCountryMappingProto(countryOut);
+
+            return new CountryOutputData(countryOut, countryMappingProto);
         } finally{
             // End of country processing.
             errors.popScope();
@@ -620,5 +655,43 @@ public final class TzLookupGenerator {
 
     private static void logInfo(String msg) {
         System.err.println("I: " + msg);
+    }
+
+    private static class CountryOutputData {
+        private final TzLookupFile.Country tzLookupCountry;
+        private final TzIdsProto.CountryMapping timeZoneIdsCountryMapping;
+
+        private CountryOutputData(TzLookupFile.Country tzLookupCountry,
+                TzIdsProto.CountryMapping timeZoneIdsCountryMapping) {
+            this.tzLookupCountry = Objects.requireNonNull(tzLookupCountry);
+            this.timeZoneIdsCountryMapping = Objects.requireNonNull(timeZoneIdsCountryMapping);
+        }
+
+        private TzLookupFile.Country getTzLookupCountry() {
+            return tzLookupCountry;
+        }
+
+        private TzIdsProto.CountryMapping getTimeZoneIdsCountryMapping() {
+            return timeZoneIdsCountryMapping;
+        }
+    }
+
+    private static class OutputData {
+
+        private final TzLookupFile.TimeZones tzLookupTimeZones;
+        private final TimeZoneIds timeZoneIds;
+
+        private OutputData(TzLookupFile.TimeZones tzLookupTimeZones, TimeZoneIds timeZoneIds) {
+            this.tzLookupTimeZones = Objects.requireNonNull(tzLookupTimeZones);
+            this.timeZoneIds = Objects.requireNonNull(timeZoneIds);
+        }
+
+        private TzLookupFile.TimeZones getTzLookupTimeZones() {
+            return tzLookupTimeZones;
+        }
+
+        private TimeZoneIds getTimeZoneIds() {
+            return timeZoneIds;
+        }
     }
 }

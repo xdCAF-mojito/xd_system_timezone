@@ -16,7 +16,7 @@
 apex_defaults {
     name: "com.android.tzdata-defaults",
     updatable: true,
-    min_sdk_version: "R",
+    min_sdk_version: "30",
 
     // Use a custom AndroidManifest.xml used for API targeting.
     androidManifest: ":com.android.tzdata-androidManifest",
@@ -57,5 +57,6 @@ apex {
         "apex_telephonylookup.xml",
         "apex_tzdata",
         "apex_icu_tzdata.dat",
+        "apex_tzs2.dat",
     ],
 }

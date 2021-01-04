@@ -14,7 +14,7 @@
 
 // Proto library
 java_library_host {
-    name: "countryzonesprotos",
+    name: "countryzones_protos",
 
     proto: {
         type: "full",
@@ -29,9 +29,9 @@ java_library_host {
 
     srcs: ["src/main/java/**/*.java"],
     static_libs: [
-        "countryzonesprotos",
+        "countryzones_protos",
         "icu4j",
-        "libprotobuf-java-full",
+        "tzids",
         "tztools_common",
     ],
 }
