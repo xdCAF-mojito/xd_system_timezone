@@ -15,7 +15,7 @@
  */
 package com.android.timezone.geotz.provider.core;
 
-import static com.android.timezone.geotz.provider.core.OfflineLocationTimeZoneDelegate.LISTEN_MODE_NA;
+import static com.android.timezone.geotz.provider.core.OfflineLocationTimeZoneDelegate.LOCATION_LISTEN_MODE_NA;
 import static com.android.timezone.geotz.provider.core.OfflineLocationTimeZoneDelegate.LOCATION_LISTEN_MODE_HIGH;
 import static com.android.timezone.geotz.provider.core.OfflineLocationTimeZoneDelegate.LOCATION_LISTEN_MODE_LOW;
 import static com.android.timezone.geotz.provider.core.LogUtils.formatElapsedRealtimeMillis;
@@ -42,31 +42,31 @@ import java.util.Objects;
  * <p>See the docs for each {@code MODE_} constant for an explanation of each mode.
  *
  * <pre>
- * The initial mode is {@link #MODE_DISABLED}.
+ * The initial mode is {@link #MODE_STOPPED}.
  *
  * Valid transitions:
  *
- * {@link #MODE_DISABLED}
- *   -> {@link #MODE_ENABLED}(1)
- *       - when the LTZP first receives an enabled request it starts listening for the current
+ * {@link #MODE_STOPPED}
+ *   -> {@link #MODE_STARTED}(1)
+ *       - when the LTZP first receives an started request it starts listening for the current
  *         location with {@link OfflineLocationTimeZoneDelegate#LOCATION_LISTEN_MODE_HIGH}.
- * {@link #MODE_ENABLED}(1)
- *   -> {@link #MODE_ENABLED}(2)
+ * {@link #MODE_STARTED}(1)
+ *   -> {@link #MODE_STARTED}(2)
  *       - when the LTZP receives a valid location, or if it is unable to determine the current
  *         location within the mode timeout, it moves to {@link
  *         OfflineLocationTimeZoneDelegate#LOCATION_LISTEN_MODE_LOW}
- *   -> {@link #MODE_DISABLED}
- *       - when the system server sends a "disabled" request the LTZP is disabled.
- * {@link #MODE_ENABLED}(2)
- *   -> {@link #MODE_ENABLED}(1)
+ *   -> {@link #MODE_STOPPED}
+ *       - when the system server sends a "stopped" request the LTZP is stopped.
+ * {@link #MODE_STARTED}(2)
+ *   -> {@link #MODE_STARTED}(1)
  *       - when no valid location has been received within the mode timeout, the LTZP will start
  *         listening for the current location using {@link
  *         OfflineLocationTimeZoneDelegate#LOCATION_LISTEN_MODE_HIGH}.
- *   -> {@link #MODE_ENABLED}(2)
+ *   -> {@link #MODE_STARTED}(2)
  *       - when the LTZP receives a valid location, it stays in {@link
  *         OfflineLocationTimeZoneDelegate#LOCATION_LISTEN_MODE_LOW}
- *   -> {@link #MODE_DISABLED}
- *       - when the system server sends a "disabled" request the LTZP is disabled.
+ *   -> {@link #MODE_STOPPED}
+ *       - when the system server sends a "stopped" request the LTZP is stopped.
  *
  * {All states}
  *   -> {@link #MODE_FAILED} (terminal state)
@@ -78,21 +78,21 @@ import java.util.Objects;
  */
 class Mode {
 
-    @IntDef({ MODE_DISABLED, MODE_ENABLED, MODE_FAILED, MODE_DESTROYED })
+    @IntDef({ MODE_STOPPED, MODE_STARTED, MODE_FAILED, MODE_DESTROYED })
     @interface ModeEnum {}
 
     /**
      * An inactive state. The LTZP may not have received a request yet, or it has and the LTZP has
-     * been explicitly disabled.
+     * been explicitly stopped.
      */
     @ModeEnum
-    static final int MODE_DISABLED = 1;
+    static final int MODE_STOPPED = 1;
 
     /**
-     * The LTZP has been enabled by the system server, and is listening for the current location.
+     * The LTZP has been started by the system server, and is listening for the current location.
      */
     @ModeEnum
-    static final int MODE_ENABLED = 2;
+    static final int MODE_STARTED = 2;
 
     /**
      * The LTZP's service has been destroyed.
@@ -111,7 +111,7 @@ class Mode {
     final int mModeEnum;
 
     /**
-     * The current location listen mode. Only used when mModeEnum == {@link #MODE_ENABLED}.
+     * The current location listen mode. Only used when mModeEnum == {@link #MODE_STARTED}.
      */
     final @ListenModeEnum int mListenMode;
 
@@ -134,28 +134,28 @@ class Mode {
     private final String mEntryCause;
 
     /**
-     * Used when mModeEnum == {@link #MODE_ENABLED}. The {@link Cancellable} that can be
+     * Used when mModeEnum == {@link #MODE_STARTED}. The {@link Cancellable} that can be
      * used to stop listening for the current location.
      */
     @Nullable
     private Cancellable mLocationListenerCancellable;
 
     /**
-     * Used when mModeEnum == {@link #MODE_ENABLED}. The {@link Cancellable} that can be
+     * Used when mModeEnum == {@link #MODE_STARTED}. The {@link Cancellable} that can be
      * used to stop listening for the current location.
      */
     @Nullable
     private Cancellable mTimeoutCancellable;
 
     /**
-     * Used when mModeEnum == {@link #MODE_ENABLED} to record the token associated with the
+     * Used when mModeEnum == {@link #MODE_STARTED} to record the token associated with the
      * mode timeout.
      */
     @Nullable
     private String mTimeoutToken;
 
     Mode(@ModeEnum int modeEnum, @NonNull String entryCause) {
-        this(modeEnum, entryCause, LISTEN_MODE_NA);
+        this(modeEnum, entryCause, LOCATION_LISTEN_MODE_NA);
     }
 
     Mode(@ModeEnum int modeEnum, @NonNull String entryCause,
@@ -169,15 +169,15 @@ class Mode {
         mEntryCause = entryCause;
     }
 
-    /** Returns the disabled mode which is the starting state for a provider. */
+    /** Returns the stopped mode which is the starting state for a provider. */
     @NonNull
-    static Mode createDisabledMode() {
-        return new Mode(MODE_DISABLED, "init" /* entryCause */);
+    static Mode createStoppedMode() {
+        return new Mode(MODE_STOPPED, "init" /* entryCause */);
     }
 
     /**
      * Associates the supplied {@link Cancellable} with the mode to enable location listening to
-     * be cancelled. Used when mModeEnum == {@link #MODE_ENABLED}. See
+     * be cancelled. Used when mModeEnum == {@link #MODE_STARTED}. See
      * {@link #cancelLocationListening()}.
      */
     void setLocationListenerCancellable(@NonNull Cancellable locationListenerCancellable) {
@@ -206,7 +206,7 @@ class Mode {
 
     /**
      * Associates the {@code timeoutToken} with the mode for later retrieval. Used for
-     * {@link #MODE_ENABLED}.
+     * {@link #MODE_STARTED}.
      */
     void setTimeoutInfo(@NonNull Cancellable timeoutCancellable,
             @NonNull String timeoutToken) {
@@ -252,10 +252,10 @@ class Mode {
     /** Returns a string representation of the {@link ModeEnum} value provided. */
     static String prettyPrintModeEnum(@ModeEnum int modeEnum) {
         switch (modeEnum) {
-            case MODE_DISABLED:
-                return "MODE_DISABLED";
-            case MODE_ENABLED:
-                return "MODE_ENABLED";
+            case MODE_STOPPED:
+                return "MODE_STOPPED";
+            case MODE_STARTED:
+                return "MODE_STARTED";
             case MODE_DESTROYED:
                 return "MODE_DESTROYED";
             case MODE_FAILED:
@@ -268,7 +268,7 @@ class Mode {
     /** Returns a string representation of the {@link ListenModeEnum} value provided. */
     static String prettyPrintListenModeEnum(@ListenModeEnum int listenMode) {
         switch (listenMode) {
-            case LISTEN_MODE_NA:
+            case LOCATION_LISTEN_MODE_NA:
                 return "LISTEN_MODE_NA";
             case LOCATION_LISTEN_MODE_HIGH:
                 return "LOCATION_LISTEN_MODE_HIGH";
@@ -280,7 +280,7 @@ class Mode {
     }
 
     private static @ModeEnum int validateModeEnum(@ModeEnum int modeEnum) {
-        if (modeEnum < MODE_DISABLED || modeEnum > MODE_FAILED) {
+        if (modeEnum < MODE_STOPPED || modeEnum > MODE_FAILED) {
             throw new IllegalArgumentException("modeEnum=" + modeEnum);
         }
         return modeEnum;
@@ -288,12 +288,12 @@ class Mode {
 
     private static @ListenModeEnum int validateListenModeEnum(
             @ModeEnum int modeEnum, @ListenModeEnum int listenMode) {
-        if (modeEnum == MODE_ENABLED) {
+        if (modeEnum == MODE_STARTED) {
             if (listenMode != LOCATION_LISTEN_MODE_HIGH && listenMode != LOCATION_LISTEN_MODE_LOW) {
                 throw new IllegalArgumentException();
             }
         } else {
-            if (listenMode != LISTEN_MODE_NA) {
+            if (listenMode != LOCATION_LISTEN_MODE_NA) {
                 throw new IllegalArgumentException();
             }
         }
