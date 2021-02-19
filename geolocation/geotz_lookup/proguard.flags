@@ -1,4 +1,0 @@
--keep class android.timezone.geolocation.GeoTimeZonesFinder {
-*;
-}
--dontobfuscate
